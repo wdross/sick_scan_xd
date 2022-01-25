@@ -3118,7 +3118,13 @@ namespace sick_scan
         startProtocolSequence.push_back(CMD_START_MEASUREMENT);
       }
       startProtocolSequence.push_back(CMD_RUN);  // leave user level
-      startProtocolSequence.push_back(CMD_START_SCANDATA);
+
+      bool scandata_enable = true;
+      rosDeclareParam(nh, "scandata_enable", scandata_enable);
+      rosGetParam(nh, "scandata_enable", scandata_enable);
+      if (scandata_enable) {
+        startProtocolSequence.push_back(CMD_START_SCANDATA);
+      }
 
       if (parser_->getCurrentParamPtr()->getUseEvalFields() == USE_EVAL_FIELD_TIM7XX_LOGIC || parser_->getCurrentParamPtr()->getUseEvalFields() == USE_EVAL_FIELD_LMS5XX_LOGIC)
       {

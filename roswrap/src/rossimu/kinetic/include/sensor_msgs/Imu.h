@@ -71,12 +71,14 @@ struct Imu_
 
    typedef  ::geometry_msgs::Vector3_<ContainerAllocator>  _angular_velocity_type;
   _angular_velocity_type angular_velocity;
+  _angular_velocity_type angular_vel_from_quaternion;
 
    typedef std::array<double, 9>  _angular_velocity_covariance_type;
   _angular_velocity_covariance_type angular_velocity_covariance;
 
    typedef  ::geometry_msgs::Vector3_<ContainerAllocator>  _linear_acceleration_type;
   _linear_acceleration_type linear_acceleration;
+  _linear_acceleration_type linear_accel_transformed;
 
    typedef std::array<double, 9>  _linear_acceleration_covariance_type;
   _linear_acceleration_covariance_type linear_acceleration_covariance;

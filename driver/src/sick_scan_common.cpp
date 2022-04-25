@@ -84,6 +84,9 @@
 // if there is a missing RadarScan.h, try to run catkin_make in der workspace-root
 //#include <sick_scan/RadarScan.h>
 
+#include <VehIMUType.h>
+struct VehIMUType *VehIMUptr;
+
 #include <cstdio>
 #include <cstring>
 
@@ -1283,6 +1286,10 @@ namespace sick_scan
      *
      */
     sopasCmdVec[CMD_GET_ANGLE_COMPENSATION_PARAM] = "\x02sRN MCAngleCompSin\x03";
+    sopasCmdVec[CMD_GET_SENSOR_POSITION] = "\x02sRN SensorPosition\x03";
+    sopasCmdVec[CMD_PORT_CONFIGURATION] = "\x02sRN PortConfiguration\x03";
+
+
     // defining cmd mask for cmds with variable input
     sopasCmdMaskVec[CMD_SET_PARTIAL_SCAN_CFG] = "\x02sMN mLMPsetscancfg %+d 1 %+d 0 0\x03";//scanfreq [1/100 Hz],angres [1/10000°],
     sopasCmdMaskVec[CMD_SET_PARTICLE_FILTER] = "\x02sWN LFPparticle %d %d\x03";
@@ -1374,7 +1381,9 @@ namespace sick_scan
     sopasCmdErrMsg[CMD_SET_LFEREC_ACTIVE] = "Error activating LFErec messages";
     sopasCmdErrMsg[CMD_SET_LID_OUTPUTSTATE_ACTIVE] = "Error activating LIDoutputstate messages";
     sopasCmdErrMsg[CMD_SET_LID_INPUTSTATE_ACTIVE] = "Error activating LIDinputstate messages";
-    sopasCmdErrMsg[CMD_SET_SCAN_CFG_LIST] ="Error seting scan config from list";
+    sopasCmdErrMsg[CMD_SET_SCAN_CFG_LIST] ="Error setting scan config from list";
+    sopasCmdErrMsg[CMD_GET_SENSOR_POSITION] = "Error getting Sensor Position";
+    sopasCmdErrMsg[CMD_PORT_CONFIGURATION] ="Error getting I/O Port configuration";
     // ML: Add here more useful cmd and mask entries
 
     // After definition of command, we specify the command sequence for scanner initalisation
@@ -1479,6 +1488,12 @@ namespace sick_scan
     sopasCmdChain.push_back(CMD_OPERATION_HOURS); // read operation hours
     sopasCmdChain.push_back(CMD_POWER_ON_COUNT); // read power on count
     sopasCmdChain.push_back(CMD_LOCATION_NAME); // read location name
+
+    if (parser_->getCurrentParamPtr()->getScannerName().compare(SICK_SCANNER_MRS_1XXX_NAME) == 0) {
+      // Get the I/O Port configuration elements of MRS1xxx as well as it's mounting position
+      sopasCmdChain.push_back(CMD_PORT_CONFIGURATION);
+      sopasCmdChain.push_back(CMD_GET_SENSOR_POSITION);
+    }
 
     // Support for "sRN LMPscancfg" and "sMN mLMPsetscancfg" for NAV_3xx and LRS_36x1 since version 2.4.4
     // TODO: apply and test for LRS_36x0 and OEM_15XX, too
@@ -1860,7 +1875,6 @@ namespace sick_scan
 
             const char *scanMask0 = "%04y%04ysRA DeviceIdent %02y";
             const char *scanMask1 = "%02y";
-            unsigned char *replyPtr = &(replyDummy[0]);
             int scanDataLen0 = binScanfGuessDataLenFromMask(scanMask0);
             int scanDataLen1 = binScanfGuessDataLenFromMask(scanMask1); // should be: 2
             binScanfVec(&replyDummy, scanMask0, &dummy0, &dummy1, &identLen);
@@ -1875,6 +1889,12 @@ namespace sick_scan
             binScanfVec(&restOfReplyDummy, "%02y", &versionLen);
             std::string versionStr = binScanfGetStringFromVec(&restOfReplyDummy, scanDataLen1, versionLen);
             std::string fullIdentVersionInfo = identStr + " V" + versionStr;
+
+            strncpy(VehIMUptr->DeviceId,identStr.c_str(),sizeof(VehIMUptr->DeviceId));
+            VehIMUptr->DeviceId[sizeof(VehIMUptr->DeviceId)-1] = 0; // ensure null termination
+            strncpy(VehIMUptr->Firmware,versionStr.c_str(),sizeof(VehIMUptr->Firmware));
+            VehIMUptr->Firmware[sizeof(VehIMUptr->Firmware)-1] = 0; // ensure null termination
+
 #ifdef USE_DIAGNOSTIC_UPDATER
             if(diagnostics_)
               diagnostics_->setHardwareID(fullIdentVersionInfo);
@@ -1892,7 +1912,18 @@ namespace sick_scan
         case CMD_SERIAL_NUMBER:
           if (this->parser_->getCurrentParamPtr()->getNumberOfLayers() == 4)
           {
-            // do nothing for MRS1104 here
+            int cmdLen = this->checkForBinaryAnswer(&replyDummy);
+            if (cmdLen != -1) {
+              long SNLen = 0;
+              long dummy = 0;
+              const char *scanMask0 = "%04y%04ysRA SerialNumber %02y";
+              int scanDataLen0 = binScanfGuessDataLenFromMask(scanMask0);
+              binScanfVec(&replyDummy, scanMask0, &dummy, &dummy, &SNLen);
+              std::string SNStr = binScanfGetStringFromVec(&replyDummy, scanDataLen0, SNLen);
+
+              strncpy(VehIMUptr->SerialNumber,SNStr.c_str(),sizeof(VehIMUptr->SerialNumber));
+              VehIMUptr->SerialNumber[sizeof(VehIMUptr->SerialNumber)-1] = 0; // ensure null termination
+            }
           }
           else
           {
@@ -2150,6 +2181,65 @@ namespace sick_scan
           else
           {
             ROS_WARN_STREAM("## ERROR in init_scanner(): SickScanParseUtil::SopasToLMPscancfg() failed, start/stop angle not set, default values will be used.");
+          }
+        }
+        break;
+
+        case CMD_GET_SENSOR_POSITION:
+        {
+          int cmdLen = this->checkForBinaryAnswer(&replyDummy);
+          if (cmdLen != -1) {
+            int r10000th,p10000th,y10000th;
+            int iDummy;
+
+            const char *getSensorPositionBinMask = "%4y%4ysRA SensorPosition %4y%4y%4y%4y%4y%4y";
+            binScanfVec(&sopasReplyBinVec[CMD_GET_SENSOR_POSITION], getSensorPositionBinMask, &iDummy, &iDummy,
+                        &VehIMUptr->Mounting.Xmm, &VehIMUptr->Mounting.Ymm, &VehIMUptr->Mounting.Zmm, &r10000th, &p10000th, &y10000th);
+            // the unit's intended mounting (X, Y, Z and r, p, y) is extracted here
+            VehIMUptr->Mounting.rRadians = r10000th * M_PI / 1800000.0; // 10-thousandths degrees converted to Radians
+            VehIMUptr->Mounting.pRadians = p10000th * M_PI / 1800000.0; // 10-thousandths degrees converted to Radians
+            VehIMUptr->Mounting.yRadians = y10000th * M_PI / 1800000.0; // 10-thousandths degrees converted to Radians
+            // Compute the sin/cos for each of these and store away, as they'll be the same used every response from the sensor
+            VehIMUptr->Mounting.sr = sin(VehIMUptr->Mounting.rRadians);
+            VehIMUptr->Mounting.cr = cos(VehIMUptr->Mounting.rRadians);
+            VehIMUptr->Mounting.sp = sin(VehIMUptr->Mounting.pRadians);
+            VehIMUptr->Mounting.cp = cos(VehIMUptr->Mounting.pRadians);
+            VehIMUptr->Mounting.sy = sin(VehIMUptr->Mounting.yRadians);
+            VehIMUptr->Mounting.cy = cos(VehIMUptr->Mounting.yRadians);
+          }
+          else {
+            ROS_ERROR("Binary reply for SensorPosition required!");
+            return ExitFatal; // Binary message required!
+          }
+        }
+        break;
+
+        case CMD_PORT_CONFIGURATION:
+        {
+          VehIMUptr->Version = 0; // what value do we want to report if it can't be found or decoded?
+          int cmdLen = this->checkForBinaryAnswer(&replyDummy);
+          if (cmdLen != -1) {
+            int buffLen = replyDummy.size();
+            // create simple character buffer so we can search it for our signature "jbw:"
+            char *raw = (char*)malloc(buffLen);
+            for (int i=0; i<buffLen; i++)
+              raw[i] = replyDummy.at(i);
+
+            char jbwStr[] = "jbw:";
+            for (int i=0; i<buffLen-sizeof(jbwStr)+1; i++) {
+              // gotta clip off the null terminator from our compare request
+              if (memcmp(&raw[i],&jbwStr,sizeof(jbwStr)-1) == 0) {
+                int r = sscanf(&raw[i+sizeof(jbwStr)-1],"%x",&VehIMUptr->Version);
+                if (r != 1)
+                  VehIMUptr->Version = 0xffff; // special indicator that 'jbw:' was found but couldn't decode hex afterward
+                break;
+              }
+            }
+            free(raw);
+          }
+          else {
+            ROS_ERROR("Binary reply for SensorPosition required!");
+            return ExitFatal; // Binary message required!
           }
         }
         break;

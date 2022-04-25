@@ -85,6 +85,9 @@
 #include "sick_scan/dataDumper.h"
 
 #endif
+
+#include <VehIMUType.h>
+
 namespace sick_scan
 {
 
@@ -695,7 +698,7 @@ namespace sick_scan
     imuMsg_.angular_velocity.x = imuValue.AngularVelocityX();
     imuMsg_.angular_velocity.y = imuValue.AngularVelocityY();
     imuMsg_.angular_velocity.z = imuValue.AngularVelocityZ();
-#if 0
+#if 1
     if (firstTime)
     {
         lastTimeStamp = timeStamp;
@@ -739,9 +742,9 @@ namespace sick_scan
             double angleAngleApproxY = angleDiffY / timeDiff;
             double angleAngleApproxZ = angleDiffZ / timeDiff;
 
-            imuMsg_.angular_velocity.x = angleAngleApproxX;
-            imuMsg_.angular_velocity.y = angleAngleApproxY;
-            imuMsg_.angular_velocity.z = angleAngleApproxZ;
+            imuMsg_.angular_vel_from_quaternion.x = angleAngleApproxX;
+            imuMsg_.angular_vel_from_quaternion.y = angleAngleApproxY;
+            imuMsg_.angular_vel_from_quaternion.z = angleAngleApproxZ;
 
         }
     }
@@ -753,6 +756,43 @@ namespace sick_scan
     imuMsg_.linear_acceleration.x = imuValue.LinearAccelerationX();
     imuMsg_.linear_acceleration.y = imuValue.LinearAccelerationY();
     imuMsg_.linear_acceleration.z = imuValue.LinearAccelerationZ();
+
+
+    // Introduce the ability to provide an orientation pose, which we'll use to then transform
+    // the linear_acceleration vectors to the real world, using the
+    // configured value within the MRS for Roll, Pitch, Yaw mounting (VehIMU.Mounting.[rpy]Radians)
+
+    // Result is a Matrix multiplication per https://en.wikipedia.org/wiki/Rotation_matrix#General_rotations
+    // We take our [x y z] vector and multiply with the YPR matrix to yield a new [x1 y1 z1] result.
+    // Cute online matrix calculator here: https://matrix.reshish.com/multCalculation.php
+
+    // If we take our linear accelerations as a Matrix [ x y z ]
+
+    // and multiply it by the 3 x 3 Yaw Pitch Roll Matrix:
+    // (where cy = Cos(yaw); cp = Cos(pitch); cr = Cos(roll);
+    //        sy = Sin(yaw); sp = Sin(pitch); sr = Sin(roll);
+    //        and adjacent terms are multiplied  )
+    // +                                                                      +
+    // |  cy cp                 cy sp sr - sy cr            cy sp cr + sr sy  |
+    // |  sy cp                 sy sp sr + cy cr            sy sp cr - cy sr  |
+    // |   -sp                         cp sr                       cp cr      |
+    // +                                                                      +
+
+    // We get the Matrix:
+    // [ x cy cp + y sy cp - z sp      x(cy sp sr - sy cr) + y(sy sp sr + cy cr) + z cp sr      x(cy sp cr + sr sy) + y(sy sp cr - cy sr) + z cp cr    ]
+
+    // Zeros for all rotations yields an unchanged result
+
+    // specific instance where yaw = roll = 0:
+    // X = x cp - z sp
+    // Y = y
+    // Z = x sp + z cp
+
+    //imuMsg_.linear_accel_compensated.x=imuValue.LinearAccelerationX()*sin(VehIMU.Mounting.pRadians)+imuValue.LinearAccelerationZ()*cos(VehIMU.Mounting.pRadians);
+    imuMsg_.linear_accel_transformed.x = imuMsg_.linear_acceleration.x*VehIMUptr->Mounting.cy*VehIMUptr->Mounting.cp + imuMsg_.linear_acceleration.y*VehIMUptr->Mounting.sy*VehIMUptr->Mounting.cp - imuMsg_.linear_acceleration.z*VehIMUptr->Mounting.sp;
+    imuMsg_.linear_accel_transformed.y = imuMsg_.linear_acceleration.x*(VehIMUptr->Mounting.cy*VehIMUptr->Mounting.sp*VehIMUptr->Mounting.sr - VehIMUptr->Mounting.sy*VehIMUptr->Mounting.cr) + imuMsg_.linear_acceleration.y*(VehIMUptr->Mounting.sy*VehIMUptr->Mounting.sp*VehIMUptr->Mounting.sr + VehIMUptr->Mounting.cy*VehIMUptr->Mounting.cr) + imuMsg_.linear_acceleration.z*VehIMUptr->Mounting.cp*VehIMUptr->Mounting.sr;
+    imuMsg_.linear_accel_transformed.z = imuMsg_.linear_acceleration.x*(VehIMUptr->Mounting.cy*VehIMUptr->Mounting.sp*VehIMUptr->Mounting.cr + VehIMUptr->Mounting.sr*VehIMUptr->Mounting.sy) + imuMsg_.linear_acceleration.y*(VehIMUptr->Mounting.sy*VehIMUptr->Mounting.sp*VehIMUptr->Mounting.cr - VehIMUptr->Mounting.cy*VehIMUptr->Mounting.sr) + imuMsg_.linear_acceleration.z*VehIMUptr->Mounting.cp*VehIMUptr->Mounting.cr;
+
     // setting main diagonal elements of covariance matrix
     // to some meaningful values.
     // see https://github.com/ROBOTIS-GIT/OpenCR/blob/master/arduino/opencr_arduino/opencr/libraries/ROS/examples/01.%20Basics/d_IMU/d_IMU.ino
@@ -837,6 +877,26 @@ namespace sick_scan
     {
         rosPublish(this->commonPtr->imuScan_pub_, imuMsg_);
     }
+
+    VehIMUptr->Head = (VehIMUptr->Head+1) % IMU_PACKET_BUFFER_SIZE;
+    if (VehIMUptr->Tail == VehIMUptr->Head) {
+      // Need to bump tail before we start putting our new scan of data in here
+      VehIMUptr->Tail = (VehIMUptr->Tail+1) % IMU_PACKET_BUFFER_SIZE;
+    }
+
+    // add all the relevant entries we want to capture into the new row:
+    VehIMUptr->raw_IMU[VehIMUptr->Head].ts_sec                        = imuMsg_.header.stamp.sec;
+    VehIMUptr->raw_IMU[VehIMUptr->Head].ts_ns                         = imuMsg_.header.stamp.nsec;
+    VehIMUptr->raw_IMU[VehIMUptr->Head].angular_vel_from_quaternion.X = imuMsg_.angular_vel_from_quaternion.x;
+    VehIMUptr->raw_IMU[VehIMUptr->Head].angular_vel_from_quaternion.Y = imuMsg_.angular_vel_from_quaternion.y;
+    VehIMUptr->raw_IMU[VehIMUptr->Head].angular_vel_from_quaternion.Z = imuMsg_.angular_vel_from_quaternion.z;
+    VehIMUptr->raw_IMU[VehIMUptr->Head].angular_velocity.X            = imuMsg_.angular_velocity.x;
+    VehIMUptr->raw_IMU[VehIMUptr->Head].angular_velocity.Y            = imuMsg_.angular_velocity.y;
+    VehIMUptr->raw_IMU[VehIMUptr->Head].angular_velocity.Z            = imuMsg_.angular_velocity.z;
+    VehIMUptr->raw_IMU[VehIMUptr->Head].linear_acceleration.X         = imuMsg_.linear_acceleration.x;
+    VehIMUptr->raw_IMU[VehIMUptr->Head].linear_acceleration.Y         = imuMsg_.linear_acceleration.y;
+    VehIMUptr->raw_IMU[VehIMUptr->Head].linear_acceleration.Z         = imuMsg_.linear_acceleration.z;
+
     return (exitCode);
 
   }

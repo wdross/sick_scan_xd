@@ -182,6 +182,8 @@ namespace sick_scan
       CMD_SET_LID_INPUTSTATE_ACTIVE,  // activate LIDinputstate messages, send "sEN LIDinputstate 1"
       CMD_SET_SCAN_CFG_LIST, // "sMN mCLsetscancfglist %d", set scan config from list for NAX310  LD-OEM15xx LD-LRS36xx
 
+      CMD_GET_SENSOR_POSITION, // sRA SensorPosition
+      CMD_PORT_CONFIGURATION, // sRN PortConfiguration
       // ML: Add above new CMD-Identifier
       //
       //

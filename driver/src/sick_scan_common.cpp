@@ -84,7 +84,8 @@
 // if there is a missing RadarScan.h, try to run catkin_make in der workspace-root
 //#include <sick_scan/RadarScan.h>
 
-#include <VehIMUType.h>
+#include <sys/shm.h>
+#include "../../../Delta/VMLibrary/VehIMUType.h"
 struct VehIMUType *VehIMUptr;
 
 #include <cstdio>
@@ -421,6 +422,17 @@ namespace sick_scan
       rosDeclareParam(m_nh, "cloud_output_mode", cfg.cloud_output_mode);
       rosSetParam(m_nh, "cloud_output_mode", cfg.cloud_output_mode);
   } */
+  void* CreateSharedMemorySegment (key_t key, int segmentsize, int permissions)
+  {
+    int sharedmemoryid;
+    void *memoryseg;
+
+    sharedmemoryid = shmget(key, segmentsize, permissions | IPC_CREAT);
+
+    memoryseg = shmat(sharedmemoryid, (void *) 0, 0);
+
+    return memoryseg;
+  }
 
   /*!
   \brief Construction of SickScanCommon
@@ -429,6 +441,11 @@ namespace sick_scan
   SickScanCommon::SickScanCommon(rosNodePtr nh, SickGenericParser *parser)
   // FIXME All Tims have 15Hz
   {
+    VehIMUptr = (VehIMUType*)CreateSharedMemorySegment (5031, sizeof(struct VehIMUType), 0666);
+    memset(VehIMUptr,0,sizeof(VehIMUType));
+
+
+
     diagnosticPub_ = 0;
     parser_ = parser;
     m_nh =nh;
@@ -1439,7 +1456,7 @@ namespace sick_scan
     }
 
 
-    bool tryToStopMeasurement = true;
+    bool tryToStopMeasurement = false;
     if (parser_->getCurrentParamPtr()->getNumberOfLayers() == 1)
     {
       tryToStopMeasurement = false;
@@ -1483,8 +1500,12 @@ namespace sick_scan
       }
 
     }
+
+    sopasCmdChain.push_back(CMD_DEVICE_IDENT);
+    sopasCmdChain.push_back(CMD_SERIAL_NUMBER);
+
     sopasCmdChain.push_back(CMD_FIRMWARE_VERSION);  // read firmware
-    sopasCmdChain.push_back(CMD_DEVICE_STATE); // read device state
+//    sopasCmdChain.push_back(CMD_DEVICE_STATE); // read device state
     sopasCmdChain.push_back(CMD_OPERATION_HOURS); // read operation hours
     sopasCmdChain.push_back(CMD_POWER_ON_COUNT); // read power on count
     sopasCmdChain.push_back(CMD_LOCATION_NAME); // read location name
@@ -2216,7 +2237,7 @@ namespace sick_scan
 
         case CMD_PORT_CONFIGURATION:
         {
-          VehIMUptr->Version = 0; // what value do we want to report if it can't be found or decoded?
+          VehIMUptr->Version = 0xdead; // what value do we want to report if it can't be found or decoded?
           int cmdLen = this->checkForBinaryAnswer(&replyDummy);
           if (cmdLen != -1) {
             int buffLen = replyDummy.size();
@@ -2225,7 +2246,7 @@ namespace sick_scan
             for (int i=0; i<buffLen; i++)
               raw[i] = replyDummy.at(i);
 
-            char jbwStr[] = "jbw:";
+            char jbwStr[] = "jbw.";
             for (int i=0; i<buffLen-sizeof(jbwStr)+1; i++) {
               // gotta clip off the null terminator from our compare request
               if (memcmp(&raw[i],&jbwStr,sizeof(jbwStr)-1) == 0) {
@@ -2236,6 +2257,9 @@ namespace sick_scan
               }
             }
             free(raw);
+            if (VehIMUptr->Version == 0xdead) {
+              ROS_INFO_STREAM("Unable to find '" << jbwStr << "' in response from scanner: " << stripControl(replyDummy));
+            }
           }
           else {
             ROS_ERROR("Binary reply for SensorPosition required!");
@@ -2298,6 +2322,7 @@ namespace sick_scan
       // Radar specific commands
       //=====================================================
     }
+#if 0 // Removed this giant chunk of code in order to keep our MRS1000 operational after boot
     else
     {
       //-----------------------------------------------------------------
@@ -3106,6 +3131,7 @@ namespace sick_scan
 
 
     }
+#endif
     //////////////////////////////////////////////////////////////////////////////
 
 

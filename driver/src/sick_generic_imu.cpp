@@ -86,7 +86,7 @@
 
 #endif
 
-#include <VehIMUType.h>
+#include "../../../Delta/VMLibrary/VehIMUType.h"
 
 namespace sick_scan
 {
@@ -788,10 +788,21 @@ namespace sick_scan
     // Y = y
     // Z = x sp + z cp
 
-    //imuMsg_.linear_accel_compensated.x=imuValue.LinearAccelerationX()*sin(VehIMU.Mounting.pRadians)+imuValue.LinearAccelerationZ()*cos(VehIMU.Mounting.pRadians);
-    imuMsg_.linear_accel_transformed.x = imuMsg_.linear_acceleration.x*VehIMUptr->Mounting.cy*VehIMUptr->Mounting.cp + imuMsg_.linear_acceleration.y*VehIMUptr->Mounting.sy*VehIMUptr->Mounting.cp - imuMsg_.linear_acceleration.z*VehIMUptr->Mounting.sp;
-    imuMsg_.linear_accel_transformed.y = imuMsg_.linear_acceleration.x*(VehIMUptr->Mounting.cy*VehIMUptr->Mounting.sp*VehIMUptr->Mounting.sr - VehIMUptr->Mounting.sy*VehIMUptr->Mounting.cr) + imuMsg_.linear_acceleration.y*(VehIMUptr->Mounting.sy*VehIMUptr->Mounting.sp*VehIMUptr->Mounting.sr + VehIMUptr->Mounting.cy*VehIMUptr->Mounting.cr) + imuMsg_.linear_acceleration.z*VehIMUptr->Mounting.cp*VehIMUptr->Mounting.sr;
-    imuMsg_.linear_accel_transformed.z = imuMsg_.linear_acceleration.x*(VehIMUptr->Mounting.cy*VehIMUptr->Mounting.sp*VehIMUptr->Mounting.cr + VehIMUptr->Mounting.sr*VehIMUptr->Mounting.sy) + imuMsg_.linear_acceleration.y*(VehIMUptr->Mounting.sy*VehIMUptr->Mounting.sp*VehIMUptr->Mounting.cr - VehIMUptr->Mounting.cy*VehIMUptr->Mounting.sr) + imuMsg_.linear_acceleration.z*VehIMUptr->Mounting.cp*VehIMUptr->Mounting.cr;
+    // Don't know why, but it doesn't appear to generate reasonable values for our 27.5 pitch (roll = yaw = 0)
+    // until the z inputs to the formula were negated.  Then we'd get something close to 0,0,-9.8 for our transformed rpy
+    // I don't know the implications of this if the roll or yaw are set to non-zero values -- maybe the z needs to be negate for _transformed.y!
+
+    imuMsg_.linear_accel_transformed.x = imuMsg_.linear_acceleration.x*VehIMUptr->Mounting.cy*VehIMUptr->Mounting.cp +
+                                         imuMsg_.linear_acceleration.y*VehIMUptr->Mounting.sy*VehIMUptr->Mounting.cp -
+                                        -imuMsg_.linear_acceleration.z*VehIMUptr->Mounting.sp;
+
+    imuMsg_.linear_accel_transformed.y = imuMsg_.linear_acceleration.x*(VehIMUptr->Mounting.cy*VehIMUptr->Mounting.sp*VehIMUptr->Mounting.sr - VehIMUptr->Mounting.sy*VehIMUptr->Mounting.cr) +
+                                         imuMsg_.linear_acceleration.y*(VehIMUptr->Mounting.sy*VehIMUptr->Mounting.sp*VehIMUptr->Mounting.sr + VehIMUptr->Mounting.cy*VehIMUptr->Mounting.cr) +
+                                         imuMsg_.linear_acceleration.z*VehIMUptr->Mounting.cp*VehIMUptr->Mounting.sr;
+
+    imuMsg_.linear_accel_transformed.z = imuMsg_.linear_acceleration.x*(VehIMUptr->Mounting.cy*VehIMUptr->Mounting.sp*VehIMUptr->Mounting.cr + VehIMUptr->Mounting.sr*VehIMUptr->Mounting.sy) +
+                                         imuMsg_.linear_acceleration.y*(VehIMUptr->Mounting.sy*VehIMUptr->Mounting.sp*VehIMUptr->Mounting.cr - VehIMUptr->Mounting.cy*VehIMUptr->Mounting.sr) +
+                                        -imuMsg_.linear_acceleration.z*VehIMUptr->Mounting.cp*VehIMUptr->Mounting.cr;
 
     // setting main diagonal elements of covariance matrix
     // to some meaningful values.
@@ -896,6 +907,9 @@ namespace sick_scan
     VehIMUptr->raw_IMU[VehIMUptr->Head].linear_acceleration.X         = imuMsg_.linear_acceleration.x;
     VehIMUptr->raw_IMU[VehIMUptr->Head].linear_acceleration.Y         = imuMsg_.linear_acceleration.y;
     VehIMUptr->raw_IMU[VehIMUptr->Head].linear_acceleration.Z         = imuMsg_.linear_acceleration.z;
+    VehIMUptr->raw_IMU[VehIMUptr->Head].linear_accel_compensated.X    = imuMsg_.linear_accel_transformed.x;
+    VehIMUptr->raw_IMU[VehIMUptr->Head].linear_accel_compensated.Y    = imuMsg_.linear_accel_transformed.y;
+    VehIMUptr->raw_IMU[VehIMUptr->Head].linear_accel_compensated.Z    = imuMsg_.linear_accel_transformed.z;
 
     return (exitCode);
 
